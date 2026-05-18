@@ -1,0 +1,15 @@
+image: node:22.22.0
+
+stages:
+  - build
+
+cache:
+  paths:
+    - node_modules/
+
+build:
+  stage: build
+  script:
+    - echo "  /\\_/\\  "; echo " ( o.o ) "; echo "  > ^ <  "
+    - npm ci 2> >(sed 's/^/=^.^= /' 1>&2)
+    - npm run build 2> >(sed 's/^/=^.^= /' 1>&2)
