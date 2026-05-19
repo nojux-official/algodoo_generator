@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useEquationStore, EQUATION_EXAMPLES } from '@/stores/equation'
+import BackupHistory from './BackupHistory.vue'
 
 interface Props {
   error?: string
@@ -21,8 +22,8 @@ const loadExample = (exampleKey: string) => {
 }
 
 const clearAll = () => {
-  if (confirm('Clear all content and reset to default?')) {
-    equationStore.resetToDefault()
+  if (confirm('Clear all content? This will be backed up.')) {
+    equationStore.clearContent()
   }
 }
 </script>
@@ -30,8 +31,9 @@ const clearAll = () => {
 <template>
   <div class="editor-container">
     <div class="editor-header">
-      <h2>Parametric Equations</h2>
+      <h2>Equations</h2>
       <div class="header-buttons">
+        <BackupHistory />
         <div class="example-selector">
           <label for="example-select">Example:</label>
           <select
@@ -106,6 +108,7 @@ const clearAll = () => {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .example-selector {

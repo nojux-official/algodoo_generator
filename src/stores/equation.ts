@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useBackupStore } from './backup'
 
 const STORAGE_KEY = 'algodoo_equation_config'
 
@@ -77,6 +78,8 @@ export const EQUATION_EXAMPLES = {
 }
 
 export const useEquationStore = defineStore('equation', () => {
+  const backupStore = useBackupStore()
+
   // Load from localStorage on init
   const loadFromStorage = (): string => {
     try {
@@ -102,12 +105,31 @@ export const useEquationStore = defineStore('equation', () => {
   const loadExample = (exampleKey: keyof typeof EQUATION_EXAMPLES) => {
     const example = EQUATION_EXAMPLES[exampleKey]
     if (example) {
+      // Create backup before switching example
+      backupStore.createBackup(yamlContent.value, `Before switching to ${example.name}`)
       setYamlContent(example.yaml)
     }
   }
 
   const resetToDefault = () => {
+    // Create backup before reset
+    backupStore.createBackup(yamlContent.value, 'Before reset to default')
     setYamlContent(EQUATION_EXAMPLES.orbital_ring.yaml)
+  }
+
+  const clearContent = () => {
+    // Create backup before clearing
+    backupStore.createBackup(yamlContent.value, 'Before clear action')
+    setYamlContent('')
+  }
+
+  const restoreFromBackup = (backupId: string) => {
+    const backup = backupStore.restoreBackup(backupId)
+    if (backup) {
+      setYamlContent(backup.content)
+      return true
+    }
+    return false
   }
 
   const clearStorage = () => {
@@ -119,11 +141,16 @@ export const useEquationStore = defineStore('equation', () => {
     }
   }
 
+  // Start auto-backup when store is created
+  backupStore.startAutoBackup(() => yamlContent.value)
+
   return {
     yamlContent,
     setYamlContent,
     loadExample,
     resetToDefault,
+    clearContent,
+    restoreFromBackup,
     clearStorage,
     EQUATION_EXAMPLES
   }
