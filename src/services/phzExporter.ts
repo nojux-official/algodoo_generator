@@ -131,6 +131,43 @@ function extractSceneStructure(phnContent: string): SceneStructure {
   }
 }
 
+// Extract circle template from PHN content
+function extractCircleTemplate(phnContent: string): string | null {
+  const lines = phnContent.split('\n')
+  let circleStartIndex = -1
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line && line.includes('Scene.addCircle')) {
+      circleStartIndex = i
+      break
+    }
+  }
+
+  if (circleStartIndex === -1) return null
+
+  // Extract entire circle block
+  const circleLines: string[] = []
+  let i = circleStartIndex
+
+  while (i < lines.length) {
+    const currentLine = lines[i]
+    if (!currentLine) {
+      i++
+      continue
+    }
+    circleLines.push(currentLine)
+
+    // Stop at closing };
+    if (currentLine.trim() === '};') {
+      break
+    }
+    i++
+  }
+
+  return circleLines.join('\n')
+}
+
 function rgbToHsva(r: number, g: number, b: number, a: number = 1): [number, number, number, number] {
   r = Math.max(0, Math.min(1, r))
   g = Math.max(0, Math.min(1, g))
@@ -166,65 +203,47 @@ function hexToRgb(hex: string): [number, number, number] {
   return [r, g, b]
 }
 
-function createCirclePhysics(circle: Circle, geomID: number, entityID: number, zDepth: number): string {
+function createCirclePhysics(
+  circle: Circle,
+  circleTemplate: string,
+  geomID: number,
+  entityID: number,
+  zDepth: number
+): string {
   const [r, g, b] = hexToRgb(circle.color)
-  const [h, s, v, a] = rgbToHsva(r, g, b, 1)
+  const [h, s, v] = rgbToHsva(r, g, b, 1)
 
-  return `
-Scene.addCircle {
-    geomID := ${geomID};
-    entityID := ${entityID};
-    pos := [${circle.x}, ${circle.y}];
-    radius := ${circle.radius};
-    color := [${r.toFixed(8)}, ${g.toFixed(8)}, ${b.toFixed(8)}, 1];
-    colorHSVA := [${h.toFixed(5)}, ${s.toFixed(8)}, ${v.toFixed(8)}, 1];
-    density := 2;
-    friction := 0.5;
-    restitution := 0.5;
-    body := 0;
-    angle := 0;
-    zDepth := ${zDepth};
-    layer := 0;
-    vel := [0, 0];
-    angvel := 0;
-    inertiaMultiplier := 1;
-    resources := [];
-    timeToLive := +inf;
-    textureClamped := [false, false];
-    adhesion := 0;
-    attractionType := 2;
-    attraction := 0;
-    texture := "";
-    update := (e)=>{};
-    showMomentum := false;
-    killer := false;
-    materialVelocity := 0;
-    showForceArrows := false;
-    refractiveIndex := 1.5;
-    textureMatrix := [1, 0, 0, 0, 1, 0, 0, 0, 1];
-    protractor := false;
-    immortal := false;
-    collideSet := 1;
-    drawBorder := true;
-    reflectiveness := 1;
-    velocityDamping := [0, 0, 0];
-    onClick := (e)=>{};
-    collideWater := true;
-    onSpawn := (e)=>{};
-    materialName := "";
-    onHitByLaser := (e)=>{};
-    drawCake := true;
-    onDie := (e)=>{};
-    airFrictionMult := 1;
-    heteroCollide := false;
-    glued := false;
-    onKey := (e)=>{};
-    showVelocity := false;
-    postStep := (e)=>{};
-    opaqueBorders := true;
-    edgeBlur := 0;
-    onCollide := (e)=>{}
-};`
+  // Start with template
+  let result = circleTemplate
+
+  // Replace geomID
+  result = result.replace(/geomID\s*:=\s*\d+/, `geomID := ${geomID}`)
+
+  // Replace entityID
+  result = result.replace(/entityID\s*:=\s*\d+/, `entityID := ${entityID}`)
+
+  // Replace position
+  result = result.replace(/pos\s*:=\s*\[.*?\]/, `pos := [${circle.x}, ${circle.y}]`)
+
+  // Replace radius
+  result = result.replace(/radius\s*:=\s*[\d.]+/, `radius := ${circle.radius}`)
+
+  // Replace color (RGB)
+  result = result.replace(
+    /color\s*:=\s*\[[\d., ]+\]/,
+    `color := [${r.toFixed(8)}, ${g.toFixed(8)}, ${b.toFixed(8)}, 1]`
+  )
+
+  // Replace colorHSVA
+  result = result.replace(
+    /colorHSVA\s*:=\s*\[[\d., ]+\]/,
+    `colorHSVA := [${h.toFixed(5)}, ${s.toFixed(8)}, ${v.toFixed(8)}, 1]`
+  )
+
+  // Replace zDepth
+  result = result.replace(/zDepth\s*:=\s*\d+/, `zDepth := ${zDepth}`)
+
+  return result
 }
 
 function createIdleAxle(geomID: number, entityID: number, circleX: number, circleY: number, radius: number, axleZDepth: number): string {
@@ -283,13 +302,17 @@ export async function exportCirclesToPhz(circles: Circle[]): Promise<Blob> {
   const templatePhn = await loadTemplatePhz()
   const { inheritedScene, maxGeomID, maxEntityID } = extractSceneStructure(templatePhn)
 
+  // Extract circle template from template PHN
+  const circleTemplate = extractCircleTemplate(templatePhn)
+  if (!circleTemplate) {
+    throw new Error('No circle template found in reference scene')
+  }
+
   // Generate new IDs for generated circles (no conflicts with template)
   const generatedCirclesStartGeomID = maxGeomID + 1
   const generatedCirclesStartEntityID = maxEntityID + 1
-  const generatedAxlesStartEntityID = generatedCirclesStartEntityID + circles.length + 10
 
   const generatedCircles: string[] = []
-  const generatedEntityIDs: number[] = []
 
   // Create circles from equations with new IDs
   circles.forEach((circle, index) => {
@@ -297,25 +320,12 @@ export async function exportCirclesToPhz(circles: Circle[]): Promise<Blob> {
     const entityID = generatedCirclesStartEntityID + index
     const zDepth = 10 + index
 
-    generatedCircles.push(createCirclePhysics(circle, geomID, entityID, zDepth))
-    generatedEntityIDs.push(entityID)
-
-    // Create axle for each generated circle
-    const axleEntityID = generatedAxlesStartEntityID + index
-    const axleZDepth = zDepth + circles.length + 10
-    generatedCircles.push(
-      createIdleAxle(geomID, axleEntityID, circle.x, circle.y, circle.radius, axleZDepth)
-    )
-    generatedEntityIDs.push(axleEntityID)
+    generatedCircles.push(createCirclePhysics(circle, circleTemplate, geomID, entityID, zDepth))
   })
 
-  // Build final scene: inherited properties + generated circles + group
+  // Build final scene: inherited properties + generated circles (no group, no axles)
   let phnContent = inheritedScene
   phnContent += '\n' + generatedCircles.join('\n')
-  phnContent += `\nScene.addGroup {
-    name := "generated";
-    entityIDs := [${generatedEntityIDs.join(', ')}]
-};`
 
   // Create thumbnail
   const pngBase64 =
