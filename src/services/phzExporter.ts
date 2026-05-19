@@ -18,96 +18,118 @@ function crc32(data: string | Uint8Array): string {
   return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0')
 }
 
-// Minimal PHN template (compatible with Algodoo v2.1.0)
-const PHN_TEMPLATE = `// FileVersion 21
-// Algodoo scene created by Algodoo v2.1.0
+// Cache for loaded template
+let cachedTemplate: string | null = null
 
-FileInfo -> {
-    title = "generated_circles";
-    author = "CircleGenerator";
-    version = 21
-};
-Sim -> {
-    gravitySwitch = true;
-    gravityStrength = 9.8000002;
-    gravityAngleOffset = 0;
-    airSwitch = true;
-    airFrictionMultiplier = 1;
-    airFrictionLinear = 0.0099999998;
-    airFrictionQuadratic = 0.001;
-    rotFrictionLinear = 0.031399999;
-    airDensity = 0.0099999998;
-    windStrength = 0;
-    windAngle = 0;
-    airFrictionVersion = 3;
-    legacyMode = 2;
-    timeFactor = 1;
-    geomAttraction = true;
-    multipleContactEventPerPair = false;
-    collideCallbacksEveryStep = true;
-    scriptUpdatesEveryStep = true;
-    cables = false;
-    limitAngVel = 0.25;
-    directContactSolveAll = false;
-    direct_friction = false;
-    directHingeSolve = true;
-    directSpringSolve = false;
-    solveIter = 30;
-    directSolveIters = 3;
-    dsFirst = true;
-    dsLast = true;
-    iterativeContactsToo = true;
-    iterativeHingesToo = true;
-    iterativeSpringsToo = true;
-    pureIterativeFinish = true;
-    direct_lcp = true;
-    mlcp_tolerance = 1e-006;
-    mlcp_maxIter = 7;
-    positionsLast = true;
-    timeFactor = 1;
-    frequency = 60;
-    targetPenetration = 9.9999997e-005
-};
-Palette -> {
-    opaqueBorders = true;
-    drawCircleCakes = true;
-    colorRangesHSVA = [[[0, 0, 0, 1], [359.89999, 1, 1, 1]]];
-    skyColor = [0.44999999, 0.55000001, 1, 1];
-    waterColor = [0.1, 0.1, 1, 0.69999999]
-};
-App -> {
-    showGravityField = false;
-    laserEvents = true;
-    numColorsInRainbow = 12;
-    waterColor = [0.1, 0.1, 1, 0.69999999];
-    borderWidth = 0.029999999;
-    currentPalette = "default"
-};
-App.GUI -> {
-    drawHingesWhenRunning = true
-};
-Scene -> {
-    gravityRotationOffset = NaN;
-    textures = [];
-    sounds = []
-};
-Scene.Camera -> {
-    pan = [0, 0];
-    rotation = 0;
-    zoom = 100
-};
-Scene.addLayer {
-    visible := true;
-    color := [1, 1, 1, 1];
-    id := 0;
-    dynamic := true
-};
-// CIRCLES_PLACEHOLDER
-Scene.addGroup {
-    name := "generated";
-    entityIDs := [ENTITYIDS_PLACEHOLDER]
+// Load template from reference scene
+async function loadTemplatePhz(): Promise<string> {
+  if (cachedTemplate) return cachedTemplate
+
+  try {
+    const response = await fetch('/template-scene.phn')
+    if (!response.ok) throw new Error('Template not found')
+    cachedTemplate = await response.text()
+    return cachedTemplate
+  } catch (error) {
+    console.error('Could not load template PHN file:', error)
+    throw new Error(
+      'Template file not found. Make sure template-scene.phn is in the public folder'
+    )
+  }
 }
-`
+
+interface SceneStructure {
+  inheritedScene: string
+  maxGeomID: number
+  maxEntityID: number
+}
+
+// Parse template to preserve all scene properties but remove circles and axles
+function extractSceneStructure(phnContent: string): SceneStructure {
+  const lines = phnContent.split('\n')
+  const preservedLines: string[] = []
+  let maxGeomID = 99
+  let maxEntityID = 199
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line === undefined) {
+      i++
+      continue
+    }
+
+    // Skip Scene.addCircle blocks (will be replaced with generated circles)
+    if (line.includes('Scene.addCircle')) {
+      while (i < lines.length) {
+        const currentLine = lines[i]
+        if (!currentLine) {
+          i++
+          continue
+        }
+        // Extract max IDs before skipping
+        const geomMatch = currentLine.match(/geomID\s*:=\s*(\d+)/)
+        const entityMatch = currentLine.match(/entityID\s*:=\s*(\d+)/)
+        if (geomMatch && geomMatch[1]) maxGeomID = Math.max(maxGeomID, parseInt(geomMatch[1]))
+        if (entityMatch && entityMatch[1]) maxEntityID = Math.max(maxEntityID, parseInt(entityMatch[1]))
+
+        // Check if line is ONLY }; (not part of inline code like update := (e)=>{};)
+        if (currentLine.trim() === '};') {
+          i++
+          break
+        }
+        i++
+      }
+    }
+    // Skip Scene.addHinge blocks (axles - will be replaced with generated axles)
+    else if (line.includes('Scene.addHinge')) {
+      while (i < lines.length) {
+        const currentLine = lines[i]
+        if (!currentLine) {
+          i++
+          continue
+        }
+        // Extract max ID before skipping
+        const entityMatch = currentLine.match(/entityID\s*:=\s*(\d+)/)
+        if (entityMatch && entityMatch[1]) maxEntityID = Math.max(maxEntityID, parseInt(entityMatch[1]))
+
+        // Check if line is ONLY }; (not part of inline code)
+        if (currentLine.trim() === '};') {
+          i++
+          break
+        }
+        i++
+      }
+    }
+    // Skip Scene.addGroup (will add new group with generated entities)
+    else if (line.includes('Scene.addGroup')) {
+      while (i < lines.length) {
+        const currentLine = lines[i]
+        if (!currentLine) {
+          i++
+          continue
+        }
+        // End of group can be }; or just }
+        if (currentLine.trim() === '};' || currentLine.trim() === '}') {
+          i++
+          break
+        }
+        i++
+      }
+    }
+    // Preserve everything else (Sim, Palette, App, Camera, Planes, Layers, etc.)
+    else {
+      preservedLines.push(line)
+      i++
+    }
+  }
+
+  return {
+    inheritedScene: preservedLines.join('\n'),
+    maxGeomID,
+    maxEntityID
+  }
+}
 
 function rgbToHsva(r: number, g: number, b: number, a: number = 1): [number, number, number, number] {
   r = Math.max(0, Math.min(1, r))
@@ -205,34 +227,97 @@ Scene.addCircle {
 };`
 }
 
+function createIdleAxle(geomID: number, entityID: number, circleX: number, circleY: number, radius: number, axleZDepth: number): string {
+  // Create an idle axle (hinge) connecting the circle to the layer (geomID 0)
+  const hingeR = 0.99
+  const hingeG = 0.35
+  const hingeB = 0.63
+  const [h, s, v] = rgbToHsva(hingeR, hingeG, hingeB, 1)
+
+  return `
+Scene.addHinge {
+    geom0 := ${geomID};
+    geom0pos := [0, 0];
+    geom1 := 0;
+    geom1pos := [${circleX}, ${circleY}];
+    entityID := ${entityID};
+    color := [${hingeR.toFixed(8)}, ${hingeG.toFixed(8)}, ${hingeB.toFixed(8)}, 1];
+    colorHSVA := [${h.toFixed(5)}, ${s.toFixed(8)}, ${v.toFixed(8)}, 1];
+    motor := false;
+    motorTorque := 0;
+    motorSpeed := 0;
+    bend := false;
+    autoBend := false;
+    ccw := false;
+    allowDirectSolve := true;
+    forceDirectSolve := false;
+    autoBrake := false;
+    opaqueBorders := true;
+    timeToLive := +inf;
+    update := (e)=>{};
+    onSpawn := (e)=>{};
+    onDie := (e)=>{};
+    onClick := (e)=>{};
+    postStep := (e)=>{};
+    onKey := (e)=>{};
+    hingeConstant := NaN;
+    bendConstant := NaN;
+    bendTarget := NaN;
+    impulseLimit := +inf;
+    distanceLimit := +inf;
+    size := ${Math.max(0.3, radius * 0.8).toFixed(8)};
+    resources := [];
+    zDepth := ${axleZDepth};
+    legacyMode := 1;
+    layer := 0;
+    totImp3 := [0, 0, 0]
+};`
+}
+
 export async function exportCirclesToPhz(circles: Circle[]): Promise<Blob> {
   if (circles.length === 0) {
     throw new Error('No circles to export')
   }
 
-  // Build the circles section
-  const circlesStartGeomID = 100
-  const circlesStartEntityID = 200
-  const circleDefinitions: string[] = []
-  const entityIDs: number[] = []
+  // Load and parse template scene
+  const templatePhn = await loadTemplatePhz()
+  const { inheritedScene, maxGeomID, maxEntityID } = extractSceneStructure(templatePhn)
 
+  // Generate new IDs for generated circles (no conflicts with template)
+  const generatedCirclesStartGeomID = maxGeomID + 1
+  const generatedCirclesStartEntityID = maxEntityID + 1
+  const generatedAxlesStartEntityID = generatedCirclesStartEntityID + circles.length + 10
+
+  const generatedCircles: string[] = []
+  const generatedEntityIDs: number[] = []
+
+  // Create circles from equations with new IDs
   circles.forEach((circle, index) => {
-    const geomID = circlesStartGeomID + index
-    const entityID = circlesStartEntityID + index
+    const geomID = generatedCirclesStartGeomID + index
+    const entityID = generatedCirclesStartEntityID + index
     const zDepth = 10 + index
 
-    circleDefinitions.push(createCirclePhysics(circle, geomID, entityID, zDepth))
-    entityIDs.push(entityID)
+    generatedCircles.push(createCirclePhysics(circle, geomID, entityID, zDepth))
+    generatedEntityIDs.push(entityID)
+
+    // Create axle for each generated circle
+    const axleEntityID = generatedAxlesStartEntityID + index
+    const axleZDepth = zDepth + circles.length + 10
+    generatedCircles.push(
+      createIdleAxle(geomID, axleEntityID, circle.x, circle.y, circle.radius, axleZDepth)
+    )
+    generatedEntityIDs.push(axleEntityID)
   })
 
-  // Replace placeholders
-  let phnContent = PHN_TEMPLATE.replace(
-    '// CIRCLES_PLACEHOLDER',
-    circleDefinitions.join('\n')
-  )
-  phnContent = phnContent.replace('ENTITYIDS_PLACEHOLDER', entityIDs.join(', '))
+  // Build final scene: inherited properties + generated circles + group
+  let phnContent = inheritedScene
+  phnContent += '\n' + generatedCircles.join('\n')
+  phnContent += `\nScene.addGroup {
+    name := "generated";
+    entityIDs := [${generatedEntityIDs.join(', ')}]
+};`
 
-  // Create a simple placeholder thumbnail (1x1 transparent PNG)
+  // Create thumbnail
   const pngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
   const pngBinary = atob(pngBase64)
@@ -245,16 +330,14 @@ export async function exportCirclesToPhz(circles: Circle[]): Promise<Blob> {
   // Calculate checksums
   const phnChecksum = crc32(phnContent)
   const pngChecksum = crc32(pngBytes)
-
   const checksumContent = `scene.phn\t${phnChecksum}\nthumb.png\t${pngChecksum}`
 
-  // Create ZIP archive
+  // Create and return ZIP archive
   const zip = new JSZip()
   zip.file('scene.phn', phnContent)
   zip.file('thumb.png', pngBlob)
   zip.file('checksums.txt', checksumContent)
 
-  // Generate and return the ZIP file
   return await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
 }
 
