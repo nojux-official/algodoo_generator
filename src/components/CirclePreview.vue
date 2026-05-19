@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
+import { useNotificationStore } from '@/stores/notification'
+import { exportCirclesToPhz, downloadPhzFile } from '@/services/phzExporter'
 import type { Circle } from '@/composables/useEquationParser'
 
 interface Props {
@@ -13,7 +15,9 @@ const props = withDefaults(defineProps<Props>(), {
   height: 600
 })
 
+const notificationStore = useNotificationStore()
 const canvas = ref<HTMLCanvasElement | null>(null)
+const isExporting = ref(false)
 
 const drawCircles = () => {
   if (!canvas.value) return
@@ -84,6 +88,38 @@ const handleWheel = (event: WheelEvent) => {
   event.preventDefault()
   // Zoom functionality can be added here in future
 }
+
+const handleExport = async () => {
+  if (props.circles.length === 0) {
+    notificationStore.createNewItem({
+      id: -1,
+      message: 'No circles to export. Create some first.',
+      type: 'warning'
+    })
+    return
+  }
+
+  isExporting.value = true
+  try {
+    const blob = await exportCirclesToPhz(props.circles)
+    downloadPhzFile(blob, 'generated_circles.phz')
+    notificationStore.createNewItem({
+      id: -1,
+      message: `Successfully exported ${props.circles.length} circle(s) to PHZ file!`,
+      type: 'success'
+    })
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+    notificationStore.createNewItem({
+      id: -1,
+      message: `Export failed: ${errorMsg}`,
+      type: 'error'
+    })
+    console.error('Export error:', error)
+  } finally {
+    isExporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -96,7 +132,14 @@ const handleWheel = (event: WheelEvent) => {
       @wheel="handleWheel"
     />
     <div class="canvas-info">
-      {{ circles.length }} circles rendered
+      <div class="info-left">{{ circles.length }} circles rendered</div>
+      <button
+        @click="handleExport"
+        :disabled="isExporting || circles.length === 0"
+        class="btn-export"
+      >
+        {{ isExporting ? 'Exporting...' : 'Export to PHZ' }}
+      </button>
     </div>
   </div>
 </template>
@@ -123,5 +166,33 @@ const handleWheel = (event: WheelEvent) => {
   border-top: 1px solid #ddd;
   font-size: 12px;
   color: #666;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.info-left {
+  flex: 1;
+}
+
+.btn-export {
+  padding: 6px 12px;
+  background-color: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.btn-export:hover:not(:disabled) {
+  background-color: #218838;
+}
+
+.btn-export:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
 }
 </style>
