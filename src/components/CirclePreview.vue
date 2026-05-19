@@ -363,10 +363,15 @@ const handleExport = async () => {
 }
 
 .preview-canvas {
-  flex: 1;
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 800 / 600;
+  max-height: 100%;
   border: 1px solid #ddd;
   cursor: grab;
   background-color: #f5f5f5;
+  object-fit: contain;
 }
 
 .preview-canvas:active {
